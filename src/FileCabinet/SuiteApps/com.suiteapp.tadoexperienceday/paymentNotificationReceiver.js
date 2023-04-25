@@ -2,15 +2,15 @@
  * @NApiVersion 2.1
  * @NScriptType Restlet
  */
-define([],
+define(['N/record', 'N/search'],
     
-    () => {
+    (record, search) => {
         const eventCodes = {
-            AUTHORISATION: "AUTHORISATION",
-            NOTIFICATION_OF_FRAUD: "NOTIFICATION_OF_FRAUD",
-            NOTIFICATION_OF_CHARGEBACK: "NOTIFICATION_OF_CHARGEBACK",
-            CHARGEBACK: "CHARGEBACK",
-            CHARGEBACK_REVERSED : "CHARGEBACK_REVERSED"
+            AUTHORISATION: 1,
+            NOTIFICATION_OF_FRAUD: 2,
+            NOTIFICATION_OF_CHARGEBACK: 3,
+            CHARGEBACK: 4,
+            CHARGEBACK_REVERSED : 5
         }
 
         /**
@@ -49,18 +49,35 @@ define([],
          */
         const post = (requestBody) => {
             const notificationItems = requestBody.notificationItems
+            const notificationRecs = []
             let invalidEvent
 
             notificationItems.forEach((value) => {
                 let eventCode = value.NotificationRequestItem.eventCode
+
                 if(!eventCodes.hasOwnProperty(eventCode)){
                     const message = `${eventCode} is not a valid event code`
                     log.error('eventCodeMessage', message)
+
                     invalidEvent = {
                         code: 400,
                         message: message
                     }
                 }
+                
+                let notificationRec ={ 
+                    merchantAccountCode : value.NotificationRequestItem.merchantAccountCode,
+                    eventCodeId : eventCodes[eventCode],
+                    date : value.NotificationRequestItem.eventDate,
+                    pspReference : value.NotificationRequestItem.pspReference,
+                    amount : value.NotificationRequestItem.amount.value,
+                    currency : value.NotificationRequestItem.amount.currency,
+                    eventDate : value.NotificationRequestItem.eventDate,
+                    notificationPayload: value
+                }
+
+                notificationRecs.push(notificationRec)
+
             })
 
             if(invalidEvent){
@@ -69,7 +86,9 @@ define([],
                     message: invalidEvent.message
                 }
             }
-            
+
+            createNotificationRecs(notificationRecs)
+
             return {
                 code: 200,
                 message: "Acepted"
@@ -86,6 +105,43 @@ define([],
          */
         const doDelete = (requestParams) => {
 
+        }
+
+        const createNotificationRecs = (notificationRecs) => {
+            log.debug('notificationRecs', notificationRecs)
+            notificationRecs.forEach((rec) => {
+                
+                const notificationRec = record.create({
+                    type: 'customrecord_tado_payment_notification'
+                })
+                
+                notificationRec.setValue('custrecord_pn_eventcode', rec.eventCodeId)
+                notificationRec.setValue('custrecord_pn_amount', rec.amount)
+                notificationRec.setValue('custrecord_pn_req_item', rec.notificationPayload)
+                notificationRec.setValue('custrecord_pn_pspref', rec.pspReference)
+                notificationRec.setValue('custrecord_pn_date', new Date(rec.date))
+                notificationRec.setValue('custrecord_pn_currency', getCurrencyId(rec.currency))
+
+                notificationRec.save()
+
+            })
+        }
+
+        const getCurrencyId = (isocode) => {
+           
+            var internalid;
+            
+            search.create({
+                type: 'currency',
+                filters: ['symbol', 'is', isocode],
+                columns: ['internalid']
+            }).run().each(function (res) {
+                log.debug('res', res);
+                internalid = res.getValue('internalid');
+            });
+            
+            return internalid;
+            
         }
 
         return {get, put, post, delete: doDelete}
